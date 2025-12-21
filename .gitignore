@@ -1,0 +1,52 @@
+# dependencies (bun install)
+node_modules
+
+# output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+_.log
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# IntelliJ based IDEs
+.idea
+
+# Cursor
+.cursor/
+
+# Claude
+CLAUDE.md
+
+# Bun lockfile
+bun.lock
+
+# Finder (MacOS) folder config
+.DS_Store
+
+# Downloads
+downloads/
+
+# ESP-IDF
+esp32/build/
+esp32/sdkconfig
+esp32/sdkconfig.old
+esp32/managed_components/
