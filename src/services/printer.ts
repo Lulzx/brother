@@ -59,8 +59,17 @@ async function smtpSend(filePath: string, fileName: string): Promise<string> {
 
   const authPlain = Buffer.from(`\0${SMTP_USER}\0${SMTP_PASS}`).toString("base64");
 
+  type Step = "greeting" | "ehlo" | "auth" | "mail" | "rcpt" | "data" | "body" | "done";
+
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("SMTP timeout")), 30000);
+    let step: Step = "greeting";
+    let buffer = "";
+
+    function fail(msg: string) {
+      clearTimeout(timeout);
+      reject(new Error(msg));
+    }
 
     Bun.connect({
       hostname: SMTP_HOST,
@@ -68,48 +77,72 @@ async function smtpSend(filePath: string, fileName: string): Promise<string> {
       tls: true,
       socket: {
         data(socket, data) {
-          const response = Buffer.from(data).toString();
+          buffer += Buffer.from(data).toString();
+
+          // Wait for complete response (ends with \r\n)
+          if (!buffer.endsWith("\r\n")) return;
+
+          const response = buffer;
+          buffer = "";
           const code = response.substring(0, 3);
 
-          if (response.includes("220") && !socket.data.greeted) {
-            socket.data.greeted = true;
-            socket.write(`EHLO localhost\r\n`);
-          } else if (response.startsWith("250") && !socket.data.authed) {
-            socket.data.authed = true;
-            socket.write(`AUTH PLAIN ${authPlain}\r\n`);
-          } else if (response.startsWith("235") && !socket.data.mailFrom) {
-            socket.data.mailFrom = true;
-            socket.write(`MAIL FROM:<${SMTP_USER}>\r\n`);
-          } else if (response.startsWith("250") && socket.data.mailFrom && !socket.data.rcptTo) {
-            socket.data.rcptTo = true;
-            socket.write(`RCPT TO:<${PRINTER_EMAIL}>\r\n`);
-          } else if (response.startsWith("250") && socket.data.rcptTo && !socket.data.data) {
-            socket.data.data = true;
-            socket.write(`DATA\r\n`);
-          } else if (response.startsWith("354")) {
-            socket.write(message + "\r\n.\r\n");
-          } else if (response.startsWith("250") && socket.data.data) {
+          // Check for errors
+          if (code.startsWith("4") || code.startsWith("5")) {
             socket.write(`QUIT\r\n`);
-            clearTimeout(timeout);
-            resolve(`Email sent to ${PRINTER_EMAIL} via ${SMTP_HOST}`);
-          } else if (code.startsWith("4") || code.startsWith("5")) {
-            socket.write(`QUIT\r\n`);
-            clearTimeout(timeout);
-            reject(new Error(`SMTP error: ${response.trim()}`));
+            return fail(`SMTP error: ${response.trim()}`);
+          }
+
+          switch (step) {
+            case "greeting":
+              if (response.includes("220")) {
+                step = "ehlo";
+                socket.write(`EHLO localhost\r\n`);
+              }
+              break;
+            case "ehlo":
+              // EHLO multiline: wait for final "250 " (space, not dash)
+              if (/^250 /m.test(response)) {
+                step = "auth";
+                socket.write(`AUTH PLAIN ${authPlain}\r\n`);
+              }
+              break;
+            case "auth":
+              if (response.startsWith("235")) {
+                step = "mail";
+                socket.write(`MAIL FROM:<${SMTP_USER}>\r\n`);
+              }
+              break;
+            case "mail":
+              if (response.startsWith("250")) {
+                step = "rcpt";
+                socket.write(`RCPT TO:<${PRINTER_EMAIL}>\r\n`);
+              }
+              break;
+            case "rcpt":
+              if (response.startsWith("250")) {
+                step = "data";
+                socket.write(`DATA\r\n`);
+              }
+              break;
+            case "data":
+              if (response.startsWith("354")) {
+                step = "body";
+                socket.write(message + "\r\n.\r\n");
+              }
+              break;
+            case "body":
+              if (response.startsWith("250")) {
+                step = "done";
+                socket.write(`QUIT\r\n`);
+                clearTimeout(timeout);
+                resolve(`Email sent to ${PRINTER_EMAIL} via ${SMTP_HOST}`);
+              }
+              break;
           }
         },
-        open(socket) {
-          socket.data = {
-            greeted: false,
-            authed: false,
-            mailFrom: false,
-            rcptTo: false,
-            data: false,
-          };
-        },
+        open() {},
         error(_socket, error) {
-          clearTimeout(timeout);
-          reject(new Error(`SMTP connection error: ${error.message}`));
+          fail(`SMTP connection error: ${error.message}`);
         },
         close() {},
       },

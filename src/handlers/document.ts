@@ -1,9 +1,12 @@
 import type { Context } from "grammy";
 import { getPageCount } from "../services/pdf";
 import { buildConfigKeyboard } from "../keyboards/print-config";
+import { print } from "../services/printer";
 import { defaultConfig, type UserSession } from "../types";
+import { unlink } from "fs/promises";
 
 const DOWNLOADS_DIR = "./downloads";
+const PRINT_MODE = process.env.PRINT_MODE || "email";
 
 export const sessions = new Map<number, UserSession>();
 
@@ -34,26 +37,55 @@ export async function handleDocument(ctx: Context): Promise<void> {
 
     // Get page count
     const pageCount = await getPageCount(filePath);
+    const fileName = doc.file_name || "document.pdf";
 
-    // Store session
-    const userId = ctx.from!.id;
-    sessions.set(userId, {
-      filePath,
-      fileName: doc.file_name || "document.pdf",
-      pageCount,
-      config: { ...defaultConfig },
-    });
+    if (PRINT_MODE === "email") {
+      // Email mode: print immediately, no options
+      await ctx.api.editMessageText(
+        ctx.chat!.id,
+        statusMsg.message_id,
+        `📄 *${fileName}*\n📃 ${pageCount} page${pageCount > 1 ? "s" : ""}\n\n🖨️ Sending to printer...`,
+        { parse_mode: "Markdown" }
+      );
 
-    // Show config keyboard
-    await ctx.api.editMessageText(
-      ctx.chat!.id,
-      statusMsg.message_id,
-      `📄 *${doc.file_name}*\n📃 ${pageCount} page${pageCount > 1 ? "s" : ""}\n\nConfigure print options:`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: buildConfigKeyboard(defaultConfig, pageCount),
+      try {
+        const result = await print(filePath, defaultConfig, fileName);
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          statusMsg.message_id,
+          `✅ Print job sent!\n\n📄 ${fileName}\n📃 ${pageCount} page${pageCount > 1 ? "s" : ""}\n\n${result}`,
+        );
+      } catch (error) {
+        console.error("Print error:", error);
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          statusMsg.message_id,
+          `❌ Print failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        );
       }
-    );
+
+      // Clean up
+      try { await unlink(filePath); } catch {}
+    } else {
+      // CUPS mode: show config keyboard
+      const userId = ctx.from!.id;
+      sessions.set(userId, {
+        filePath,
+        fileName,
+        pageCount,
+        config: { ...defaultConfig },
+      });
+
+      await ctx.api.editMessageText(
+        ctx.chat!.id,
+        statusMsg.message_id,
+        `📄 *${fileName}*\n📃 ${pageCount} page${pageCount > 1 ? "s" : ""}\n\nConfigure print options:`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: buildConfigKeyboard(defaultConfig, pageCount),
+        }
+      );
+    }
   } catch (error) {
     console.error("Error processing document:", error);
     await ctx.api.editMessageText(
