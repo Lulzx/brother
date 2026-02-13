@@ -41,7 +41,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
   if (action === "print") {
     await ctx.answerCallbackQuery({ text: "🖨️ Sending to printer..." });
     try {
-      const result = await print(session.filePath, session.config);
+      const result = await print(session.filePath, session.config, session.fileName);
       await ctx.editMessageText(
         `✅ Print job sent!\n\n📄 ${session.fileName}\n📃 Pages: ${session.config.pages}\n📑 Copies: ${session.config.copies}\n\n${result}`
       );
