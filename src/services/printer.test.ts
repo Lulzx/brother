@@ -102,6 +102,10 @@ describe("pdf", () => {
 
 describe("email-to-print", () => {
   test("print sample PDF via email", async () => {
+    if (!process.env.TEST_PRINT) {
+      console.log("Skipping: set TEST_PRINT=1 to send a real print job");
+      return;
+    }
     const result = await print(samplePdf, defaultConfig, "sample.pdf");
     expect(result).toContain("Email sent to");
   }, 35000);
